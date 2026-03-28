@@ -139,6 +139,71 @@ def cmd_gc(args, config: HarnessConfig) -> int:
 
 
 
+
+def cmd_security(args, config) -> int:
+    """Security audit commands."""
+    sub = getattr(args, "security_sub", None)
+
+    if sub == "audit" or sub is None:
+        # Full security audit: secrets scan + log verification
+        print("\n=== Harness Security Audit ===\n")
+        exit_code = 0
+
+        # 1. Secrets scan
+        from harness.security.secrets_scanner import SecretsScanner
+        print("Scanning for hardcoded secrets...")
+        scanner = SecretsScanner(skip_test_files=True)
+        scan_result = scanner.scan_directory(config.repo_root / "harness")
+        print(scan_result.report())
+        if not scan_result.passed:
+            exit_code = 1
+
+        # 2. Log integrity
+        print("\nVerifying decision log integrity...")
+        from harness.logs.decision_log import DecisionLog
+        log = DecisionLog(config.logs_dir)
+        results = log.verify_integrity()
+        if not results:
+            print("  Log signing not configured (set HARNESS_LOG_SIGNING_KEY to enable)")
+        else:
+            from harness.security.log_signer import LogVerifier
+            verifier = LogVerifier.from_env()
+            if verifier:
+                print(verifier.summary(results))
+                if any(not r.valid for r in results):
+                    exit_code = 1
+
+        print()
+        return exit_code
+
+    elif sub == "scan-secrets":
+        from harness.security.secrets_scanner import SecretsScanner
+        target = pathlib.Path(getattr(args, "path", "."))
+        scanner = SecretsScanner(
+            skip_test_files=not getattr(args, "include_tests", False)
+        )
+        result = scanner.scan_directory(target)
+        print(result.report())
+        return 0 if result.passed else 1
+
+    elif sub == "verify-logs":
+        from harness.security.log_signer import LogVerifier
+        from harness.logs.decision_log import DecisionLog
+        verifier = LogVerifier.from_env()
+        if verifier is None:
+            print("\n  HARNESS_LOG_SIGNING_KEY not set — log verification skipped.\n")
+            return 0
+        log = DecisionLog(config.logs_dir)
+        results = log.verify_integrity()
+        print(f"\n{verifier.summary(results)}\n")
+        return 0 if all(r.valid for r in results) else 1
+
+    else:
+        print(f"Unknown security subcommand: {sub}")
+        print("Available: audit, scan-secrets, verify-logs")
+        return 1
+
+
 def cmd_monitor(args, config) -> int:
     """Run the log monitoring pipeline."""
     import yaml
@@ -335,6 +400,15 @@ def main():
     # status
     subparsers.add_parser("status", help="Show harness health status")
 
+    # security
+    sec_parser = subparsers.add_parser("security", help="Security audit commands")
+    sec_parser.add_argument("security_sub", nargs="?",
+                            choices=["audit", "scan-secrets", "verify-logs"],
+                            default="audit")
+    sec_parser.add_argument("--path", default=".", help="Directory to scan")
+    sec_parser.add_argument("--include-tests", action="store_true",
+                            help="Include test files in secrets scan")
+
     # monitor
     mon_parser = subparsers.add_parser("monitor", help="Run log monitoring pipeline")
     mon_parser.add_argument("--poll", action="store_true", help="Polling mode (continuous)")
@@ -361,6 +435,7 @@ def main():
         "dashboard": cmd_dashboard,
         "metrics": cmd_metrics,
         "monitor": cmd_monitor,
+        "security": cmd_security,
     }
 
     sys.exit(dispatch[args.command](args, config))

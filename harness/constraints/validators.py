@@ -42,16 +42,37 @@ class LintResult:
 class SchemaValidator:
     """
     Validates agent input against policies/agent_schema.json.
+    Also runs InputSanitiser to detect prompt injection.
     Runs before any agent processes input.
     No LLM involved — pure deterministic validation.
     """
 
-    def __init__(self, schema_path: Path):
+    def __init__(self, schema_path: Path, security_config: dict = None):
         if not schema_path.exists():
             raise FileNotFoundError(f"Schema not found: {schema_path}")
         self.schema = json.loads(schema_path.read_text())
+        self._security_cfg = (security_config or {}).get("sanitiser", {})
 
     def validate(self, input_data: dict) -> LintResult:
+        # Run prompt injection sanitiser first
+        from harness.security.sanitiser import InputSanitiser
+        sanitiser = InputSanitiser(self._security_cfg)
+        san_result = sanitiser.sanitise(input_data)
+        if not san_result.passed:
+            return LintResult(
+                passed=False,
+                violations=[
+                    f"[SECURITY] {i.field_name}: {i.issue_type} ({i.pattern_label}): {i.excerpt}"
+                    for i in san_result.issues if i.severity == "block"
+                ],
+                warnings=[
+                    f"[SECURITY] {i.field_name}: {i.issue_type} ({i.pattern_label})"
+                    for i in san_result.issues if i.severity == "warn"
+                ],
+            )
+        # Use sanitised input for remaining checks (strips control chars etc.)
+        input_data = san_result.sanitised
+
         violations = []
         warnings = []
 
@@ -217,6 +238,18 @@ class StructuralLinter:
     def lint(self) -> LintResult:
         violations = []
         warnings = []
+
+        # Secrets scan — run across entire agents directory
+        from harness.security.secrets_scanner import SecretsScanner
+        scanner = SecretsScanner(skip_test_files=True)
+        scan_result = scanner.scan_directory(self.agents_dir)
+        for finding in scan_result.findings:
+            msg = (f"Possible hardcoded secret in {finding.file_path}:{finding.line_number} "
+                   f"({finding.pattern_label}): {finding.excerpt}")
+            if finding.severity == "critical":
+                violations.append(msg)
+            else:
+                warnings.append(msg)
 
         for agent_file in self.agents_dir.glob("*.py"):
             agent_name = agent_file.stem

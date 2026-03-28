@@ -1,0 +1,41 @@
+# security_config.yaml
+# Security configuration for the SDLC harness.
+# Controls prompt injection detection, log signing, and secrets scanning.
+
+sanitiser:
+  # Maximum characters per string field before it is truncated and flagged
+  max_field_length: 10000
+
+  # If true, prompt injection patterns cause SchemaValidator to return fail (block).
+  # If false, they are recorded as warnings but do not block the agent run.
+  block_on_injection: true
+
+  # Regex patterns to whitelist (e.g. legitimate inputs that match injection patterns)
+  # Use sparingly — this bypasses injection detection for matching strings.
+  allow_patterns: []
+
+log_signing:
+  # Log signing uses HARNESS_LOG_SIGNING_KEY environment variable.
+  # If the env var is not set, signing is skipped (suitable for dev/test).
+  # To enable: export HARNESS_LOG_SIGNING_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
+  #
+  # Set to false to disable signing entirely (not recommended for production).
+  enabled: true
+
+  # If true, the CLI security verify-logs command fails on unsigned entries.
+  # If false, unsigned entries are reported as warnings only.
+  fail_on_unsigned: false
+
+secrets_scanner:
+  # Scan test files too (default: skip them — test keys are often fake)
+  scan_test_files: false
+
+  # Additional file patterns to skip (regex)
+  skip_patterns:
+    - ".*\\.example\\.py$"
+    - ".*fixtures.*"
+
+  # High-entropy string scanning (finds keys not matching known patterns)
+  entropy_scan: true
+  entropy_threshold: 4.0      # Shannon entropy bits/char (4.0 is a good default)
+  min_secret_length: 20       # minimum string length to flag as high-entropy

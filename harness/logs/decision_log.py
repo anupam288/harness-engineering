@@ -21,9 +21,24 @@ class DecisionLog:
         self.path = logs_dir / "decision_log.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def append(self, result: "AgentResult") -> None:
+    def append(self, result: "AgentResult", signer=None) -> None:
+        entry = result.to_dict()
+        if signer is not None:
+            entry = signer.sign(entry)
         with self.path.open("a") as f:
-            f.write(json.dumps(result.to_dict()) + "\n")
+            f.write(json.dumps(entry) + "\n")
+
+    def verify_integrity(self) -> list:
+        """
+        Verify HMAC signatures on all log entries.
+        Returns list of VerificationResult objects.
+        Requires HARNESS_LOG_SIGNING_KEY env var to be set.
+        """
+        from harness.security.log_signer import LogVerifier
+        verifier = LogVerifier.from_env()
+        if verifier is None:
+            return []
+        return verifier.verify_log_file(self.path)
 
     def read_all(self) -> list[dict]:
         if not self.path.exists():

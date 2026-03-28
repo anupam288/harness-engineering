@@ -199,8 +199,12 @@ class BaseAgent(ABC):
         elapsed = time.monotonic() - start
         result.output["latency_seconds"] = round(elapsed, 3)
 
+        # Sign the entry if a signing key is configured
+        from harness.security.log_signer import LogSigner
+        signer = LogSigner.from_env()
+
         # Always log — harness rule
-        self._decision_log.append(result)
+        self._decision_log.append(result, signer=signer)
 
         # Record observability metrics
         last_response = getattr(self, "_last_model_response", None)

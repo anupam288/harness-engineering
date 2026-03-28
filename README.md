@@ -87,6 +87,7 @@ sdlc-harness/
 │   └── <your_agent>.md              ← Add one per specialist agent you build
 │
 ├── observability_config.yaml        ← Token budgets, cost pricing, alert thresholds
+├── security_config.yaml             ← Injection rules, signing settings, scanner config
 ├── monitoring_config.yaml           ← Log source adapters and ingestor settings
 ├── monitoring_rules.yaml            ← Versioned error patterns and corrective actions
 │
@@ -135,6 +136,11 @@ sdlc-harness/
 │   │   ├── release_agent.py         ← Phase 5: ReleaseAgent + RollbackAgent
 │   │   └── gc_agent.py              ← Phase 6: nightly garbage collection
 │   │
+│   ├── security/                    ← Prompt injection, log signing, secrets scanning
+│   │   ├── sanitiser.py             ← InputSanitiser — injection detection + field sanitisation
+│   │   ├── log_signer.py            ← LogSigner/LogVerifier — HMAC-SHA256 log integrity
+│   │   └── secrets_scanner.py       ← SecretsScanner — hardcoded secrets detection
+│   │
 │   ├── runner/                      ← Pipeline orchestration and parallel execution
 │   │   ├── parallel_runner.py       ← ParallelRunner — concurrent Layer 1 agent execution
 │   │   ├── pipeline.py              ← HarnessPipeline — full six-phase orchestration
@@ -154,6 +160,7 @@ sdlc-harness/
 │   ├── test_observability.py        ← 47 tests: metrics, aggregation, budgets, wiring
 │   ├── test_monitoring.py           ← 58 tests: adapters, ingestor, action runner, agent
 │   ├── test_runner.py               ← 34 tests: parallel runner, pipeline, checkpointing
+│   ├── test_security.py             ← 55 tests: sanitiser, signer, verifier, scanner
 │   └── scenarios/
 │       └── test_scenarios.yaml      ← Test cases (grown automatically by ScenarioAgent)
 │
@@ -163,6 +170,91 @@ sdlc-harness/
     │                                   monitoring_log.jsonl, pipeline_log.jsonl
     └── checkpoints/                 ← AgentCheckpoint files (resume failed runs)
     └── proposed_prs/                ← PRs proposed by GCAgent/LogMonitorAgent, awaiting review
+```
+
+---
+
+## Security
+
+Three layered defences — all wired in automatically, no agent code changes needed.
+
+### 1. Prompt injection detection
+
+Every agent input passes through `InputSanitiser` inside `SchemaValidator` before
+any LLM call. If an injection is detected, the agent returns `status="fail"` without
+consuming tokens.
+
+What is detected:
+
+| Category | Examples |
+|----------|---------|
+| Instruction override | "ignore previous instructions", "disregard all context" |
+| Role switching | "you are now", "act as", "pretend to be" |
+| Jailbreak | "jailbreak mode", "DAN mode" |
+| System tags | `<system>`, `[INST]`, `<|im_start|>` |
+| Code execution | `os.system()`, `subprocess.`, `eval()` |
+| Exfiltration | URLs to ngrok/pipedream/requestbin |
+| Oversized fields | Fields exceeding `max_field_length` (default 10,000 chars) |
+| Control characters | Null bytes and non-printable chars stripped silently |
+
+Configure in `security_config.yaml`:
+
+```yaml
+sanitiser:
+  max_field_length: 10000
+  block_on_injection: true   # false = warn only
+  allow_patterns:            # whitelist specific patterns if needed
+    - "your_legitimate_pattern"
+```
+
+### 2. Decision log integrity (HMAC-SHA256)
+
+Every decision log entry is signed with HMAC-SHA256 when `HARNESS_LOG_SIGNING_KEY`
+is set. Tampering with any log entry is detectable.
+
+```bash
+# Generate a signing key
+export HARNESS_LOG_SIGNING_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
+
+# Verify log integrity
+python cli.py security verify-logs
+```
+
+If the key is not set, signing is skipped silently (suitable for dev/test).
+Set `fail_on_unsigned: true` in `security_config.yaml` to make unsigned entries
+a hard failure in production.
+
+### 3. Secrets scanning
+
+The `StructuralLinter` (and CI) scans agent source files for hardcoded secrets.
+Also available as a standalone command:
+
+```bash
+python cli.py security scan-secrets          # scan harness/ directory
+python cli.py security scan-secrets --path . # scan entire repo
+```
+
+Detected patterns: Anthropic/OpenAI/AWS/GCP/Azure keys, GitHub tokens, private key
+PEM headers, generic `api_key`/`password`/`token` assignments, high-entropy strings
+assigned to suspicious variable names.
+
+Placeholders like `${ENV_VAR}`, `<placeholder>`, and `"your_key_here"` are
+whitelisted automatically.
+
+### Full security audit
+
+```bash
+python cli.py security audit
+# Runs: secrets scan + log integrity verification
+```
+
+### CLI reference
+
+```bash
+python cli.py security audit              # full audit (secrets + log integrity)
+python cli.py security scan-secrets       # secrets scan only
+python cli.py security scan-secrets --path harness/agents  # specific path
+python cli.py security verify-logs        # verify decision log signatures
 ```
 
 ---
@@ -294,6 +386,7 @@ make monitor        # triggered log analysis
 make monitor-poll   # continuous polling mode
 make pipeline       # run all phases in order
 make clean          # clear checkpoints and monitoring PRs
+make security       # run full security audit
 ```
 
 ---
@@ -944,13 +1037,14 @@ review criterion — and commit a fix. The agent will not make that mistake agai
 
 ```bash
 pytest tests/ -v
-# 216 tests total:
+# 271 tests total:
 #   24 — constraint/gate tests  (test_constraints.py)
 #   27 — model layer tests      (test_model_layer.py)
 #   26 — self-review tests      (test_self_review.py)
 #   47 — observability tests    (test_observability.py)
 #   58 — log monitoring tests   (test_monitoring.py)
 #   34 — runner/pipeline tests  (test_runner.py)
+#   55 — security tests         (test_security.py)
 ```
 
 ---
