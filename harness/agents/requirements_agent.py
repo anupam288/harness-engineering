@@ -103,14 +103,3 @@ Return ONLY valid JSON. No preamble, no markdown fences.
                 confidence=0.0,
                 flags=["llm_call_failed"],
             )
-
-    def _call_llm(self, prompt: str) -> str:
-        """Call the configured LLM. Swappable for any provider."""
-        import anthropic
-        client = anthropic.Anthropic()
-        message = client.messages.create(
-            model=self.config.llm_model,
-            max_tokens=self.config.llm_max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return message.content[0].text

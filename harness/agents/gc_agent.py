@@ -169,13 +169,3 @@ Return ONLY valid JSON.
                 agent_name=self.name, phase=self.phase, status="fail",
                 output={"error": str(exc)}, confidence=0.0, flags=["llm_call_failed"],
             )
-
-    def _call_llm(self, prompt: str) -> str:
-        import anthropic
-        client = anthropic.Anthropic()
-        msg = client.messages.create(
-            model=self.config.llm_model,
-            max_tokens=self.config.llm_max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text

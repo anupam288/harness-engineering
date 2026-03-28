@@ -85,16 +85,6 @@ class DevAgent(BaseAgent):
             f"{self.__class__.__name__} must implement _run_domain_logic()"
         )
 
-    def _call_llm(self, prompt: str) -> str:
-        import anthropic
-        client = anthropic.Anthropic()
-        message = client.messages.create(
-            model=self.config.llm_model,
-            max_tokens=self.config.llm_max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return message.content[0].text
-
 
 class OrchestratorAgent(BaseAgent):
     """
@@ -199,13 +189,3 @@ Return ONLY valid JSON.
                 agent_name=self.name, phase=self.phase, status="fail",
                 output={"error": str(exc)}, confidence=0.0, flags=["llm_call_failed"],
             )
-
-    def _call_llm(self, prompt: str) -> str:
-        import anthropic
-        client = anthropic.Anthropic()
-        message = client.messages.create(
-            model=self.config.llm_model,
-            max_tokens=self.config.llm_max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return message.content[0].text

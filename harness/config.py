@@ -81,6 +81,7 @@ class HarnessConfig:
         logs_dir.mkdir(parents=True, exist_ok=True)
         docs_dir.mkdir(parents=True, exist_ok=True)
         policies_dir.mkdir(parents=True, exist_ok=True)
+        (repo_root / "prompts").mkdir(exist_ok=True)
 
         return cls(
             repo_root=repo_root,
@@ -89,6 +90,16 @@ class HarnessConfig:
             policies_dir=policies_dir,
             **overrides,
         )
+
+    def build_model(self, agent_name: str = "default"):
+        """Build the right model instance for an agent via model_config.yaml."""
+        from harness.model import build_model
+        return build_model(self, agent_name=agent_name)
+
+    def prompt_registry(self):
+        """Return a PromptRegistry rooted at this repo."""
+        from harness.model.prompt_registry import PromptRegistry
+        return PromptRegistry(self.repo_root)
 
     def summary(self) -> str:
         return (

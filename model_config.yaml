@@ -1,0 +1,85 @@
+# model_config.yaml
+# Controls which model each agent uses.
+# Changes here take effect immediately — no code changes needed.
+#
+# Per-agent config overrides the default.
+# Fallback chain: if primary fails after retries, fallback model is used.
+
+default:
+  provider: anthropic
+  model_id: claude-sonnet-4-20250514
+  max_tokens: 2048
+  temperature: 0.0
+  fallback:
+    provider: anthropic
+    model_id: claude-haiku-4-5-20251001
+    max_tokens: 2048
+
+agents:
+  # RequirementsAgent — needs careful reading, use full model
+  requirements_agent:
+    provider: anthropic
+    model_id: claude-sonnet-4-20250514
+    max_tokens: 3000
+    temperature: 0.0
+
+  # ArchitectureAgent — complex reasoning, use full model
+  architecture_agent:
+    provider: anthropic
+    model_id: claude-sonnet-4-20250514
+    max_tokens: 4000
+    temperature: 0.0
+
+  # QAAgent — pattern matching, haiku is sufficient and faster
+  qa_agent:
+    provider: anthropic
+    model_id: claude-haiku-4-5-20251001
+    max_tokens: 2048
+    temperature: 0.0
+
+  # ScenarioAgent — creative edge case generation, use full model
+  scenario_agent:
+    provider: anthropic
+    model_id: claude-sonnet-4-20250514
+    max_tokens: 2048
+    temperature: 0.2   # slight temperature for creative scenario generation
+
+  # AdversarialAgent — adversarial reasoning, use full model
+  adversarial_agent:
+    provider: anthropic
+    model_id: claude-sonnet-4-20250514
+    max_tokens: 2048
+    temperature: 0.0
+
+  # GCAgent — synthesises many logs, needs large context
+  gc_agent:
+    provider: anthropic
+    model_id: claude-sonnet-4-20250514
+    max_tokens: 4000
+    temperature: 0.0
+
+  # ReleaseAgent — risk-sensitive, use full model
+  release_agent:
+    provider: anthropic
+    model_id: claude-sonnet-4-20250514
+    max_tokens: 2048
+    temperature: 0.0
+
+  # OrchestratorAgent — conflict resolution, use full model
+  orchestrator_agent:
+    provider: anthropic
+    model_id: claude-sonnet-4-20250514
+    max_tokens: 2048
+    temperature: 0.0
+
+# To switch all agents to OpenAI, change default to:
+#
+# default:
+#   provider: openai
+#   model_id: gpt-4o
+#   max_tokens: 2048
+#   temperature: 0.0
+#   fallback:
+#     provider: openai
+#     model_id: gpt-4o-mini
+#     max_tokens: 2048

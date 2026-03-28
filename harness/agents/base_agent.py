@@ -19,6 +19,8 @@ from typing import Any
 
 from harness.config import HarnessConfig
 from harness.logs.decision_log import DecisionLog
+from harness.model.base_model import BaseModel, ModelResponse
+from harness.model.prompt_registry import PromptRegistry
 
 
 class AgentResult:
@@ -85,6 +87,9 @@ class BaseAgent(ABC):
         self._decision_log = DecisionLog(config.logs_dir)
         self._agents_md = self._load_agents_md()
         self._policies = self._load_policies()
+        # Model layer — resolved from model_config.yaml per agent
+        self._model: BaseModel = config.build_model(agent_name=self.name.lower())
+        self._prompts: PromptRegistry = config.prompt_registry()
 
     # ------------------------------------------------------------------
     # Context loading (harness core: everything the agent can see)
@@ -191,6 +196,40 @@ class BaseAgent(ABC):
         self._decision_log.append(result)
 
         return result
+
+    # ------------------------------------------------------------------
+    # Model layer helpers (use these instead of calling providers directly)
+    # ------------------------------------------------------------------
+
+    def _call_llm(self, prompt: str, system: str = "", max_tokens: int = None) -> str:
+        """
+        Call the configured LLM for this agent.
+        Automatically uses the model + fallback defined in model_config.yaml.
+        Logs token usage to decision_log metadata.
+        """
+        model = getattr(self._model, '_fallback', None)
+        response: ModelResponse = self._model.call_with_fallback(
+            prompt=prompt,
+            system=system,
+            max_tokens=max_tokens,
+            fallback=model,
+        )
+        # Attach token metadata for GC agent to read
+        self._last_model_response = response
+        return response.text
+
+    def _render_prompt(self, variables: dict = None) -> str:
+        """
+        Load this agent's prompt from prompts/<agent_name>.md and interpolate.
+        Falls back to empty string if no prompt file exists (agent uses inline prompt).
+        """
+        agent_key = self.name.lower().replace("agent", "_agent").strip("_")
+        return self._prompts.get(agent_key, variables or {})
+
+    def _render_system(self, variables: dict = None) -> str:
+        """Load this agent's system prompt from prompts/<agent_name>.system.md."""
+        agent_key = self.name.lower().replace("agent", "_agent").strip("_")
+        return self._prompts.get_system(agent_key, variables or {})
 
     # ------------------------------------------------------------------
     # Subclass contract

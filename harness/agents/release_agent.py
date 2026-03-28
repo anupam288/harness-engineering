@@ -103,16 +103,6 @@ Return ONLY valid JSON.
             return yaml.safe_load(path.read_text()) or {}
         return {}
 
-    def _call_llm(self, prompt: str) -> str:
-        import anthropic
-        client = anthropic.Anthropic()
-        msg = client.messages.create(
-            model=self.config.llm_model,
-            max_tokens=self.config.llm_max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text
-
 
 class RollbackAgent(BaseAgent):
     """
