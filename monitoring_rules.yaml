@@ -1,0 +1,136 @@
+# monitoring_rules.yaml
+# Versioned error patterns and corrective actions.
+# The LogMonitorAgent checks these deterministically before making any LLM call.
+# Adding a new response to a known error = add a rule here. No code changes needed.
+#
+# Fields:
+#   rule_id:          unique identifier
+#   description:      human-readable description
+#   pattern:          substring to match in log messages (case-insensitive)
+#   level:            filter to this log level (DEBUG/INFO/WARNING/ERROR/CRITICAL)
+#   min_occurrences:  minimum number of matching events to trigger
+#   min_error_rate:   minimum error rate in window to trigger (0.0-1.0)
+#   action:           log_only | alert_human | open_pr | trigger_rollback
+#   severity:         low | medium | high | critical
+#   root_cause_hint:  suggested root cause for the alert
+#   proposed_fix:     for open_pr: description of the fix to propose
+#   rollback_reason:  for trigger_rollback: reason string
+#   enabled:          true | false
+
+rules:
+  - rule_id: OOM_001
+    description: "Out of memory errors"
+    pattern: "OutOfMemoryError"
+    level: ERROR
+    min_occurrences: 1
+    min_error_rate: 0.0
+    action: trigger_rollback
+    severity: critical
+    root_cause_hint: "Application is running out of heap/memory. Check memory limits."
+    rollback_reason: "OOM errors indicate severe resource exhaustion — rollback to stable version"
+    enabled: true
+
+  - rule_id: DB_CONN_001
+    description: "Database connection failures"
+    pattern: "connection refused"
+    level: ERROR
+    min_occurrences: 3
+    min_error_rate: 0.05
+    action: alert_human
+    severity: high
+    root_cause_hint: "Database is unreachable. Check DB host, port, and credentials."
+    proposed_fix: "Verify database connection string in config and ensure DB is running"
+    enabled: true
+
+  - rule_id: DB_TIMEOUT_001
+    description: "Database query timeouts"
+    pattern: "query timeout"
+    level: ERROR
+    min_occurrences: 5
+    min_error_rate: 0.05
+    action: open_pr
+    severity: medium
+    root_cause_hint: "Slow queries are timing out. Likely a missing index or N+1 problem."
+    proposed_fix: "Add query timeout configuration and index the most frequently queried columns"
+    enabled: true
+
+  - rule_id: AUTH_001
+    description: "Authentication failures spike"
+    pattern: "authentication failed"
+    level: WARNING
+    min_occurrences: 10
+    min_error_rate: 0.10
+    action: alert_human
+    severity: high
+    root_cause_hint: "High auth failure rate may indicate brute force attack or misconfigured client."
+    enabled: true
+
+  - rule_id: STACK_OVERFLOW_001
+    description: "Stack overflow / infinite recursion"
+    pattern: "StackOverflowError"
+    level: ERROR
+    min_occurrences: 1
+    min_error_rate: 0.0
+    action: trigger_rollback
+    severity: critical
+    root_cause_hint: "Infinite recursion or stack exhaustion. Likely a code logic bug."
+    rollback_reason: "Stack overflow indicates a critical code defect — rollback immediately"
+    enabled: true
+
+  - rule_id: HTTP_5XX_001
+    description: "High rate of 5xx HTTP errors"
+    pattern: "500 Internal Server Error"
+    level: ERROR
+    min_occurrences: 10
+    min_error_rate: 0.15
+    action: alert_human
+    severity: high
+    root_cause_hint: "Application is returning 5xx errors at a high rate."
+    enabled: true
+
+  - rule_id: DISK_001
+    description: "Disk space warnings"
+    pattern: "no space left on device"
+    level: ERROR
+    min_occurrences: 1
+    min_error_rate: 0.0
+    action: alert_human
+    severity: critical
+    root_cause_hint: "Disk is full. Application may stop writing logs or crash."
+    enabled: true
+
+  - rule_id: NULL_PTR_001
+    description: "Null pointer / None type errors"
+    pattern: "NoneType"
+    level: ERROR
+    min_occurrences: 5
+    min_error_rate: 0.05
+    action: open_pr
+    severity: medium
+    root_cause_hint: "Null/None dereference in application code."
+    proposed_fix: "Add null checks or use Optional typing at the call sites producing these errors"
+    enabled: true
+
+  - rule_id: TIMEOUT_001
+    description: "General timeout errors"
+    pattern: "timed out"
+    level: ERROR
+    min_occurrences: 5
+    min_error_rate: 0.05
+    action: alert_human
+    severity: medium
+    root_cause_hint: "Downstream services or operations are timing out."
+    enabled: true
+
+  # Template for your domain-specific rules:
+  # - rule_id: DOMAIN_001
+  #   description: "Your error pattern description"
+  #   pattern: "your error substring"
+  #   level: ERROR
+  #   min_occurrences: 3
+  #   min_error_rate: 0.05
+  #   action: alert_human
+  #   severity: medium
+  #   root_cause_hint: "What typically causes this"
+  #   proposed_fix: "What to do about it"
+  #   enabled: true

@@ -1,0 +1,62 @@
+# monitoring_config.yaml
+# Configure log sources and ingestor behaviour.
+# Enable the adapters that match your infrastructure.
+
+ingestor:
+  poll_interval_seconds: 60          # how often to fetch log windows
+  window_duration_seconds: 300       # look back this many seconds per window
+  max_events_per_window: 1000        # cap on events per analysis window
+  spike_error_rate_threshold: 0.10   # trigger immediate analysis if error rate exceeds this
+  min_events_for_spike_detection: 10 # minimum events before spike detection activates
+  dedup_enabled: true                # deduplicate identical events across adapters
+
+adapters:
+  # ── File tail ────────────────────────────────────────────────────────────
+  file:
+    enabled: false                   # set to true and configure paths
+    paths:
+      - /var/log/app/app.log
+      - /var/log/app/error.log
+    format: auto                     # auto | json | plain | logfmt
+    service: myapp
+    encoding: utf-8
+
+  # ── Stdout pipe ──────────────────────────────────────────────────────────
+  stdout:
+    enabled: false
+    command: []                      # e.g. ["python", "-m", "myapp", "--once"]
+    format: auto
+    service: myapp
+
+  # ── Grafana Loki ─────────────────────────────────────────────────────────
+  loki:
+    enabled: false
+    url: https://logs-prod-us-central1.grafana.net
+    username: "${LOKI_USERNAME}"     # Grafana Cloud org ID
+    password: "${LOKI_API_KEY}"      # Grafana Cloud API key
+    query: '{service="myapp"}'       # LogQL query
+    service: myapp
+    timeout_seconds: 10
+    max_lines_per_query: 500
+
+  # ── Datadog ──────────────────────────────────────────────────────────────
+  datadog:
+    enabled: false
+    site: datadoghq.com              # or datadoghq.eu, us3.datadoghq.com
+    api_key: "${DD_API_KEY}"
+    app_key: "${DD_APP_KEY}"
+    query: "service:myapp status:error"
+    service: myapp
+    timeout_seconds: 15
+    max_events_per_query: 500
+
+  # ── Webhook receiver ─────────────────────────────────────────────────────
+  webhook:
+    enabled: false
+    host: 0.0.0.0
+    port: 9876
+    path: /harness/logs
+    secret: "${WEBHOOK_SECRET}"      # optional HMAC-SHA256 verification
+    max_buffer_size: 10000
+    format: auto                     # auto | generic | alertmanager | datadog
+    service: myapp

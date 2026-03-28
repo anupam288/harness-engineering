@@ -87,6 +87,14 @@ sdlc-harness/
 │   └── <your_agent>.md              ← Add one per specialist agent you build
 │
 ├── observability_config.yaml        ← Token budgets, cost pricing, alert thresholds
+├── monitoring_config.yaml           ← Log source adapters and ingestor settings
+├── monitoring_rules.yaml            ← Versioned error patterns and corrective actions
+│
+├── Makefile                         ← make test / lint / gates / gc / monitor / pipeline
+├── .pre-commit-config.yaml          ← Pre-commit hooks (structural linter, tests, validators)
+├── .github/
+│   └── workflows/
+│       └── harness.yml              ← GitHub Actions CI (gates, linter, tests, schema check)
 │
 ├── harness/
 │   ├── config.py                    ← HarnessConfig — loads harness_config.yaml
@@ -97,6 +105,18 @@ sdlc-harness/
 │   │   ├── aggregator.py            ← MetricsAggregator — p50/p95/p99, trends, cost
 │   │   ├── budget.py                ← BudgetMonitor — warn-only threshold alerts
 │   │   └── dashboard.py             ← HarnessDashboard — terminal dashboard
+│   │
+│   ├── monitoring/                  ← Runtime log monitoring layer
+│   │   ├── log_event.py             ← LogEvent, LogLevel, LogWindow (normalised)
+│   │   ├── base_adapter.py          ← BaseLogAdapter abstract interface
+│   │   ├── ingestor.py              ← Source-agnostic windowing and polling
+│   │   ├── action_runner.py         ← Executes corrective actions
+│   │   ├── log_monitor_agent.py     ← Harness agent: rule matching + LLM analysis
+│   │   └── adapters/
+│   │       ├── file_adapter.py      ← File tail + stdout pipe (JSON/plain/logfmt)
+│   │       ├── loki_adapter.py      ← Grafana Loki HTTP query API
+│   │       ├── datadog_adapter.py   ← Datadog Logs + Events API
+│   │       └── webhook_adapter.py   ← HTTP receiver (Alertmanager, Datadog, generic)
 │   │
 │   ├── model/                       ← Model layer (provider-agnostic LLM interface)
 │   │   ├── base_model.py            ← BaseModel abstract interface + ModelResponse
@@ -115,6 +135,11 @@ sdlc-harness/
 │   │   ├── release_agent.py         ← Phase 5: ReleaseAgent + RollbackAgent
 │   │   └── gc_agent.py              ← Phase 6: nightly garbage collection
 │   │
+│   ├── runner/                      ← Pipeline orchestration and parallel execution
+│   │   ├── parallel_runner.py       ← ParallelRunner — concurrent Layer 1 agent execution
+│   │   ├── pipeline.py              ← HarnessPipeline — full six-phase orchestration
+│   │   └── checkpoint.py            ← AgentCheckpoint — resume from last successful agent
+│   │
 │   ├── constraints/
 │   │   └── validators.py            ← SchemaValidator, PolicyLinter, StructuralLinter
 │   │
@@ -127,14 +152,290 @@ sdlc-harness/
 │   ├── test_model_layer.py          ← 27 tests: model factory, prompt registry, retry/fallback
 │   ├── test_self_review.py          ← 26 tests: review loop, criteria, revision, metadata
 │   ├── test_observability.py        ← 47 tests: metrics, aggregation, budgets, wiring
+│   ├── test_monitoring.py           ← 58 tests: adapters, ingestor, action runner, agent
+│   ├── test_runner.py               ← 34 tests: parallel runner, pipeline, checkpointing
 │   └── scenarios/
 │       └── test_scenarios.yaml      ← Test cases (grown automatically by ScenarioAgent)
 │
 └── .harness/
     ├── logs/                        ← decision_log.jsonl, conflict_log.jsonl,
-    │                                   override_log.jsonl, metrics_log.jsonl
-    └── proposed_prs/                ← PRs proposed by GCAgent, awaiting human review
+    │                                   override_log.jsonl, metrics_log.jsonl,
+    │                                   monitoring_log.jsonl, pipeline_log.jsonl
+    └── checkpoints/                 ← AgentCheckpoint files (resume failed runs)
+    └── proposed_prs/                ← PRs proposed by GCAgent/LogMonitorAgent, awaiting review
 ```
+
+---
+
+## Parallel execution & pipeline
+
+### Running agents in parallel
+
+The `ParallelRunner` runs Layer 1 agents concurrently — matching the architecture
+diagrams — rather than sequentially. A slow agent cannot block others.
+
+```python
+from harness.runner import ParallelRunner
+
+runner = ParallelRunner(config, max_workers=8, default_timeout=60)
+
+# Run agents concurrently, then pass to orchestrator
+result = runner.run_orchestrated(
+    layer1_agents=[bureau_agent, fraud_agent, policy_agent],
+    orchestrator=orchestrator_agent,
+    input_data={"applicant_id": "APP_123", ...},
+)
+
+# Or run in parallel without orchestration
+parallel = runner.run_parallel(agents, input_data)
+print(parallel.summary())
+# → "Parallel run: 3 agents in 1.2s | Passed: 3 | Failed: 0 | Timed out: 0"
+```
+
+### Running the full pipeline
+
+`HarnessPipeline` wires all six phases in order with gate checks between each:
+
+```python
+from harness.runner import HarnessPipeline
+
+pipeline = HarnessPipeline(config)
+results = pipeline.run_all(input_data)   # all six phases, with resume
+
+# Or run a subset
+results = pipeline.run(input_data, phases=["requirements", "design"])
+
+# Check which phases are complete
+pipeline.status()
+# → {"requirements": "complete", "design": "pending", ...}
+
+# Reset a phase to re-run it
+pipeline.reset("design")
+```
+
+### Checkpointing and resume
+
+If a pipeline run fails mid-way, re-running resumes from the last successful phase:
+
+```python
+# First run — fails at "testing"
+pipeline.run_all(input_data)
+
+# Fix the issue, then re-run — "requirements" and "design" are skipped
+pipeline.run_all(input_data, resume=True)
+```
+
+Agent-level checkpointing saves individual `AgentResult` objects so a failed
+phase can re-run only the agents that didn't complete:
+
+```python
+from harness.runner.checkpoint import AgentCheckpoint
+
+cp = AgentCheckpoint(config)
+
+# Before running an agent — check for cached result
+cached = cp.load("requirements", "RequirementsAgent", input_data)
+if cached:
+    return cached  # skip the LLM call entirely
+
+# After a successful run — save for next time
+result = agent.execute(input_data)
+if result.passed():
+    cp.save("requirements", "RequirementsAgent", input_data, result)
+```
+
+Checkpoints expire after 24 hours and are invalidated automatically
+when `input_data` changes.
+
+---
+
+## CI/CD
+
+The harness ships with ready-to-use CI/CD integration.
+
+### GitHub Actions
+
+`.github/workflows/harness.yml` runs on every push and PR:
+
+| Check | What it does |
+|-------|-------------|
+| Phase gates | Blocks merge if any gate that should be open is blocked |
+| Structural linter | Fails if any Layer 1 agent imports another Layer 1 agent |
+| Schema validator | Verifies `policies/agent_schema.json` is well-formed |
+| Policy validator | Verifies all rules in `policies/policy.yaml` have valid actions |
+| Test suite | Runs all 216 tests |
+| Uncertain terms gate | Blocks PR merge if `uncertain_terms.md` has open `[ ]` items |
+| Edge cases gate | Blocks PR merge if `edge_cases.md` has open `[ ]` items |
+| Monitoring rules | Verifies all rules in `monitoring_rules.yaml` are valid |
+
+### Pre-commit hooks
+
+`.pre-commit-config.yaml` runs a fast subset locally before every commit:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Hooks: structural linter, policy validator, monitoring rules validator, and
+`test_constraints.py` (the fastest subset of the test suite).
+
+### Makefile shortcuts
+
+```bash
+make test           # full test suite (216 tests)
+make lint           # structural linter + policy validator
+make gates          # check all phase gates
+make status         # harness health overview
+make dashboard      # observability terminal dashboard
+make metrics        # metrics summary table
+make gc             # run GC agent
+make monitor        # triggered log analysis
+make monitor-poll   # continuous polling mode
+make pipeline       # run all phases in order
+make clean          # clear checkpoints and monitoring PRs
+```
+
+---
+
+## Log monitoring
+
+The harness monitors your **application's runtime logs** — not just agent outputs —
+and takes corrective action when error patterns are detected. It is completely
+generic: plug in any log source by adding an adapter.
+
+### Architecture
+
+```
+Log Sources          Adapters             Pipeline              Actions
+───────────          ────────             ────────              ───────
+Grafana Loki    →   LokiAdapter    →                      →   log_only
+Datadog         →   DatadogAdapter →   LogIngestor        →   alert_human
+Local files     →   FileAdapter    →   (normalise,        →   open_pr
+Stdout/stderr   →   StdoutAdapter  →    deduplicate,      →   trigger_rollback
+App webhook     →   WebhookAdapter →    window)
+                                           ↓
+                                    LogMonitorAgent
+                                    (rules → LLM)
+```
+
+**Adding a new source** = one Python file subclassing `BaseLogAdapter`.
+**Changing a response to an error** = edit `monitoring_rules.yaml`. No code.
+
+### Quickstart
+
+```bash
+# 1. Configure your log source in monitoring_config.yaml
+#    Set enabled: true for the adapter(s) that match your infrastructure
+
+# 2. Add domain-specific error patterns to monitoring_rules.yaml
+
+# 3. Check adapter connectivity
+python cli.py monitor --health
+
+# 4. Run a one-shot triggered analysis (current log window)
+python cli.py monitor
+
+# 5. Start continuous polling mode
+python cli.py monitor --poll
+
+# 6. Start webhook server + polling (receives pushed alerts from Grafana/Datadog)
+python cli.py monitor --serve
+```
+
+### Supported log sources
+
+| Source | Adapter | How it works |
+|--------|---------|-------------|
+| Grafana Loki | `LokiAdapter` | Polls `/loki/api/v1/query_range` with a LogQL query |
+| Datadog | `DatadogAdapter` | Polls `/api/v2/logs/events/search` with a log query |
+| Local files | `FileAdapter` | Reads log files; auto-detects JSON, logfmt, plain text |
+| Stdout/stderr | `StdoutAdapter` | Captures subprocess output |
+| Pushed webhooks | `WebhookAdapter` | HTTP server receiving Alertmanager, Datadog, or generic JSON |
+
+All adapters emit the same normalised `LogEvent` structure. The rest of the
+pipeline is source-agnostic.
+
+### Adding a new adapter
+
+```python
+# harness/monitoring/adapters/my_adapter.py
+from harness.monitoring.base_adapter import BaseLogAdapter
+from harness.monitoring.log_event import LogEvent, LogLevel
+
+class MyAdapter(BaseLogAdapter):
+    SOURCE_NAME = "mysource"
+
+    def fetch(self, since, until, max_events=500) -> list[LogEvent]:
+        # query your log source here
+        # return normalised LogEvent objects
+        ...
+```
+
+Then register it in `harness/monitoring/adapters/__init__.py`:
+
+```python
+ADAPTER_REGISTRY["mysource"] = MyAdapter
+```
+
+And enable it in `monitoring_config.yaml`:
+
+```yaml
+adapters:
+  mysource:
+    enabled: true
+    # your adapter's config keys
+```
+
+### Two-stage decision making
+
+The `LogMonitorAgent` checks `monitoring_rules.yaml` deterministically first —
+zero token cost for known patterns. Only novel or ambiguous errors go to the LLM.
+
+```
+LogWindow → rule matching (deterministic, free)
+               ↓ no match
+           LLM analysis (novel patterns only)
+               ↓
+           MonitoringDecision → ActionRunner
+```
+
+### Corrective actions (tiered)
+
+| Action | When | What happens |
+|--------|------|-------------|
+| `log_only` | Low severity, no user impact | Recorded to `monitoring_log.jsonl` |
+| `alert_human` | Novel pattern or medium severity | Alert file in `.harness/alerts/` |
+| `open_pr` | Clear root cause with a specific fix | PR file in `.harness/proposed_prs/` |
+| `trigger_rollback` | Critical error rate or known fatal pattern | Calls `RollbackAgent`, escalates if not triggered |
+
+The harness never takes autonomous destructive action. `trigger_rollback` is
+the most aggressive — it goes through `RollbackAgent` which checks
+`rollback_triggers.yaml` thresholds before acting.
+
+### Configuring error patterns
+
+Define patterns in `monitoring_rules.yaml` — no code changes needed:
+
+```yaml
+rules:
+  - rule_id: DB_CONN_001
+    description: "Database connection failures"
+    pattern: "connection refused"     # case-insensitive substring match
+    level: ERROR                      # only match events at this level
+    min_occurrences: 3                # need at least 3 matches in the window
+    min_error_rate: 0.05              # and error rate ≥ 5%
+    action: alert_human
+    severity: high
+    root_cause_hint: "Database is unreachable"
+    enabled: true
+```
+
+Nine patterns are pre-configured (OOM, DB timeouts, auth failures, stack
+overflow, 5xx HTTP errors, disk full, null pointers, timeouts, and a
+template for your domain-specific rules).
+
+---
 
 ---
 
@@ -643,11 +944,13 @@ review criterion — and commit a fix. The agent will not make that mistake agai
 
 ```bash
 pytest tests/ -v
-# 124 tests total:
+# 216 tests total:
 #   24 — constraint/gate tests  (test_constraints.py)
 #   27 — model layer tests      (test_model_layer.py)
 #   26 — self-review tests      (test_self_review.py)
 #   47 — observability tests    (test_observability.py)
+#   58 — log monitoring tests   (test_monitoring.py)
+#   34 — runner/pipeline tests  (test_runner.py)
 ```
 
 ---

@@ -138,6 +138,73 @@ def cmd_gc(args, config: HarnessConfig) -> int:
 
 
 
+
+def cmd_monitor(args, config) -> int:
+    """Run the log monitoring pipeline."""
+    import yaml
+    from harness.monitoring.adapters import build_adapters_from_config
+    from harness.monitoring.ingestor import LogIngestor
+    from harness.monitoring.log_monitor_agent import LogMonitorAgent
+
+    mon_config_path = config.repo_root / "monitoring_config.yaml"
+    if not mon_config_path.exists():
+        print("\n  monitoring_config.yaml not found.")
+        print("  Copy the template from the repo and configure your log sources.\n")
+        return 1
+
+    mon_config = yaml.safe_load(mon_config_path.read_text()) or {}
+    adapters = build_adapters_from_config(mon_config)
+
+    enabled = [a for a in adapters if a.enabled]
+    if not enabled:
+        print("\n  No adapters enabled in monitoring_config.yaml.")
+        print("  Set enabled: true for at least one adapter.\n")
+        return 1
+
+    agent = LogMonitorAgent(config)
+    ingestor = LogIngestor(enabled, mon_config.get("ingestor", {}))
+
+    serve = getattr(args, "serve", False)
+    poll = getattr(args, "poll", False)
+    adapter_name = getattr(args, "adapter", None)
+    health = getattr(args, "health", False)
+
+    if health:
+        print("\n=== Adapter health check ===\n")
+        results = ingestor.health_check_all()
+        for name, (ok, msg) in results.items():
+            icon = "✓" if ok else "✗"
+            print(f"  {icon} {name}: {msg}")
+        print()
+        return 0
+
+    if serve:
+        # Start webhook server and run polling loop
+        from harness.monitoring.adapters.webhook_adapter import WebhookAdapter
+        for adapter in enabled:
+            if isinstance(adapter, WebhookAdapter):
+                adapter.start_server(daemon=True)
+        print("\n  Webhook server started. Running polling loop (Ctrl-C to stop)...")
+        try:
+            ingestor.run_forever(on_window=agent.analyse)
+        except KeyboardInterrupt:
+            print("\n  Monitor stopped.")
+        return 0
+
+    if poll:
+        print(f"\n  Starting polling loop (Ctrl-C to stop)...")
+        try:
+            ingestor.run_forever(on_window=agent.analyse)
+        except KeyboardInterrupt:
+            print("\n  Monitor stopped.")
+        return 0
+
+    # Default: single triggered run
+    print("\n  Running triggered log analysis...\n")
+    ingestor.run_once(on_window=agent.analyse)
+    return 0
+
+
 def cmd_dashboard(args, config) -> int:
     """Render the observability dashboard."""
     from harness.observability.dashboard import HarnessDashboard
@@ -268,6 +335,13 @@ def main():
     # status
     subparsers.add_parser("status", help="Show harness health status")
 
+    # monitor
+    mon_parser = subparsers.add_parser("monitor", help="Run log monitoring pipeline")
+    mon_parser.add_argument("--poll", action="store_true", help="Polling mode (continuous)")
+    mon_parser.add_argument("--serve", action="store_true", help="Start webhook server + poll")
+    mon_parser.add_argument("--adapter", help="Filter to one adapter")
+    mon_parser.add_argument("--health", action="store_true", help="Check adapter connectivity")
+
     # dashboard
     dash_parser = subparsers.add_parser("dashboard", help="Observability dashboard")
     dash_parser.add_argument("--agent", help="Detail view for one agent")
@@ -286,6 +360,7 @@ def main():
         "status": cmd_status,
         "dashboard": cmd_dashboard,
         "metrics": cmd_metrics,
+        "monitor": cmd_monitor,
     }
 
     sys.exit(dispatch[args.command](args, config))
