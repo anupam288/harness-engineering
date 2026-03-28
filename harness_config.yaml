@@ -1,0 +1,24 @@
+# harness_config.yaml
+# Edit this file to configure the SDLC harness for your project.
+# All paths are relative to the repo root.
+
+# LLM settings
+llm_model: "claude-sonnet-4-20250514"
+llm_max_tokens: 2048
+
+# Thresholds
+confidence_threshold: 0.75      # below this → needs_human
+canary_quality_threshold: 0.85  # below this → rollback
+
+# Directory layout (change only if you need non-standard paths)
+logs_dir: ".harness/logs"
+docs_dir: "docs"
+policies_dir: "policies"
+
+# Gate behaviour
+# true  = phases are blocked until gate conditions are met (recommended)
+# false = gates emit warnings only, phases can run anyway
+phase_gates_strict: true
+
+# GC agent schedule (cron syntax)
+gc_agent_schedule: "0 2 * * *"   # 2am nightly

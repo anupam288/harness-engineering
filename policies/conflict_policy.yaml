@@ -1,0 +1,32 @@
+# conflict_policy.yaml
+# Defines how the Orchestrator resolves disagreements between parallel agents.
+# Each entry: agent pair → resolution strategy.
+#
+# Resolution strategies:
+#   "conservative"  — take the more cautious of the two outputs
+#   "escalate"      — flag for human review, do not auto-resolve
+#   "agent_a_wins"  — prefer agent_a's output
+#   "agent_b_wins"  — prefer agent_b's output
+#   "merge"         — combine outputs (only valid if outputs are compatible)
+
+default_strategy: escalate
+
+conflicts:
+  - agents: [agent_a, agent_b]
+    condition: "outputs_contradict"
+    strategy: conservative
+    rationale: "When in doubt, take the safer path and flag for review"
+    notes: "Replace agent_a and agent_b with your actual agent names"
+
+  - agents: [agent_a, agent_b]
+    condition: "confidence_gap > 0.3"
+    strategy: "higher_confidence_wins"
+    rationale: "When one agent is significantly more confident, prefer that output"
+
+# Domain-specific conflict rules go below.
+# Example for loan origination:
+#
+#   - agents: [bureau_agent, fraud_agent]
+#     condition: "risk_level_disagrees"
+#     strategy: conservative
+#     rationale: "When bureau and fraud disagree on risk, take the higher risk assessment"

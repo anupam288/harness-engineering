@@ -1,0 +1,37 @@
+# test_scenarios.yaml
+# Maintained by ScenarioAgent. New scenarios are appended automatically.
+# Human engineers may add scenarios manually.
+# QAAgent runs all scenarios on every test phase execution.
+
+- id: SCENARIO_001
+  description: "Happy path — valid input, all fields present, expected pass"
+  input:
+    # Replace with domain-specific fields
+    example_field: "example_value"
+  expected_output:
+    status: "pass"
+    confidence_min: 0.75
+  tests_constraint: "Basic happy path — schema validation and policy linter both pass"
+  added_by: "human"
+
+- id: SCENARIO_002
+  description: "Missing required field — should be blocked by schema validator"
+  input:
+    # Intentionally omit a required field
+    incomplete: true
+  expected_output:
+    status: "fail"
+    blocked_by: "schema_validator"
+  tests_constraint: "REQ_001 — schema validator blocks before any LLM call"
+  added_by: "human"
+
+- id: SCENARIO_003
+  description: "Low confidence output — should trigger needs_human"
+  input:
+    # Replace with domain-specific fields that produce ambiguous output
+    ambiguous: true
+  expected_output:
+    status: "needs_human"
+    confidence_max: 0.75
+  tests_constraint: "POL_001 — confidence below threshold escalates to human"
+  added_by: "human"

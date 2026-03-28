@@ -1,0 +1,36 @@
+# rollback_triggers.yaml
+# Thresholds that trigger automatic rollback during deployment.
+# The RollbackAgent monitors these continuously.
+# Changes to these thresholds require a PR — never hardcoded in agent logic.
+
+canary:
+  traffic_percentage: 5
+  minimum_decisions_before_check: 20
+  evaluation_window_minutes: 30
+
+thresholds:
+  # Roll back if decision quality drops below this
+  decision_quality_min: 0.85
+
+  # Roll back if agent failure rate exceeds this
+  agent_failure_rate_max: 0.05
+
+  # Roll back if needs_human rate spikes above this
+  needs_human_rate_max: 0.20
+
+  # Roll back if p95 latency exceeds this (seconds)
+  latency_p95_max_seconds: 10.0
+
+  # Roll back if confidence drops below this on average
+  average_confidence_min: 0.75
+
+actions:
+  on_threshold_breach:
+    - action: rollback
+      notify: ["engineering-oncall"]
+      log_to: ".harness/logs/rollback_log.jsonl"
+
+  on_warning:
+    - action: alert
+      notify: ["engineering-oncall"]
+      continue_canary: true

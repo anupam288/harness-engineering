@@ -1,0 +1,45 @@
+rules:
+  - rule_id: REQ_001
+    description: All required fields must be present and non-null
+    condition: ""
+    action: block
+    deterministic: true
+    notes: Enforced by SchemaValidator before any agent runs
+
+  - rule_id: POL_001
+    description: Confidence below threshold triggers human review
+    condition: "confidence < 0.75"
+    action: escalate
+    deterministic: true
+    notes: Any agent output below confidence threshold goes to needs_human
+
+  - rule_id: POL_002
+    description: Agent may not write to policy files at runtime
+    condition: ""
+    action: block
+    deterministic: true
+    notes: Enforced by StructuralLinter in CI
+
+  - rule_id: POL_003
+    description: Layer 1 agents may not call each other directly
+    condition: ""
+    action: block
+    deterministic: true
+    notes: Enforced by StructuralLinter in CI
+
+# Domain-specific rules go below this line.
+# Replace these examples with rules derived from your requirements.
+
+  - rule_id: DOMAIN_001
+    description: "[TEMPLATE] Replace with your first hard domain rule"
+    condition: ""
+    action: block
+    deterministic: true
+    notes: Add the field name and threshold once you know your domain
+
+  - rule_id: DOMAIN_002
+    description: "[TEMPLATE] Replace with your second hard domain rule"
+    condition: ""
+    action: warn
+    deterministic: false
+    notes: Non-deterministic rules are evaluated by the relevant LLM agent
