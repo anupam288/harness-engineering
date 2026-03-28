@@ -370,3 +370,107 @@ class TestBaseAgentModelWiring:
         registry = config.prompt_registry()
         from harness.model.prompt_registry import PromptRegistry
         assert isinstance(registry, PromptRegistry)
+
+
+# ---------------------------------------------------------------------------
+# Rate limit detection and jitter tests
+# ---------------------------------------------------------------------------
+
+class TestRateLimitHandling:
+
+    def test_is_rate_limit_detects_429_in_message(self):
+        exc = ConnectionError("HTTP 429: Too Many Requests")
+        assert BaseModel._is_rate_limit(exc)
+
+    def test_is_rate_limit_detects_rate_limit_keyword(self):
+        exc = Exception("rate limit exceeded, please slow down")
+        assert BaseModel._is_rate_limit(exc)
+
+    def test_is_rate_limit_detects_too_many_requests(self):
+        exc = Exception("too many requests per minute")
+        assert BaseModel._is_rate_limit(exc)
+
+    def test_is_rate_limit_detects_quota_exceeded(self):
+        exc = Exception("quota exceeded for this billing period")
+        assert BaseModel._is_rate_limit(exc)
+
+    def test_is_rate_limit_false_for_connection_error(self):
+        exc = ConnectionError("connection refused")
+        assert not BaseModel._is_rate_limit(exc)
+
+    def test_is_rate_limit_false_for_generic_error(self):
+        exc = ValueError("invalid input")
+        assert not BaseModel._is_rate_limit(exc)
+
+    def test_call_with_retry_uses_longer_backoff_for_rate_limit(self):
+        """Rate limit retries should wait longer than transient retries."""
+        import time
+
+        model = MagicMock(spec=BaseModel)
+        model.model_id = "m"
+        success = ModelResponse(text="ok", model="m", provider="mock")
+        call_count = {"n": 0}
+        sleep_times = []
+
+        def side_effect(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise Exception("HTTP 429: rate limit")
+            return success
+
+        model.call.side_effect = side_effect
+
+        original_sleep = time.sleep
+        def capture_sleep(t):
+            sleep_times.append(t)
+
+        with patch("time.sleep", side_effect=capture_sleep):
+            result = BaseModel.call_with_retry(
+                model, prompt="test", retries=3, backoff_seconds=1.0
+            )
+
+        assert result.text == "ok"
+        # Rate limit backoff should be at least 4x base (4.0s + jitter)
+        assert sleep_times[0] >= 4.0
+
+    def test_is_rate_limit_correctly_classifies_errors(self):
+        """_is_rate_limit returns True only for rate limit errors, False for others."""
+        # Should be rate limits
+        assert BaseModel._is_rate_limit(Exception("HTTP 429: Too Many Requests"))
+        assert BaseModel._is_rate_limit(Exception("rate limit exceeded"))
+        assert BaseModel._is_rate_limit(Exception("quota exceeded"))
+        assert BaseModel._is_rate_limit(Exception("too many requests per minute"))
+
+        # Should NOT be rate limits
+        assert not BaseModel._is_rate_limit(ValueError("unexpected null"))
+        assert not BaseModel._is_rate_limit(ConnectionError("connection reset"))
+        assert not BaseModel._is_rate_limit(RuntimeError("model not found"))
+        assert not BaseModel._is_rate_limit(TimeoutError("request timed out"))
+
+    def test_dotenv_loaded_when_env_file_exists(self, tmp_path):
+        """HarnessConfig.from_repo() should load .env if present."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("TEST_HARNESS_VAR=loaded_from_dotenv\n")
+        (tmp_path / "harness" / "agents").mkdir(parents=True)
+        (tmp_path / ".harness" / "logs").mkdir(parents=True)
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "policies").mkdir()
+        (tmp_path / "prompts").mkdir()
+        (tmp_path / "AGENTS.md").write_text("# test")
+
+        import os
+        os.environ.pop("TEST_HARNESS_VAR", None)
+
+        try:
+            from dotenv import load_dotenv
+            HAS_DOTENV = True
+        except ImportError:
+            HAS_DOTENV = False
+
+        from harness.config import HarnessConfig
+        HarnessConfig.from_repo(tmp_path)
+
+        if HAS_DOTENV:
+            assert os.environ.get("TEST_HARNESS_VAR") == "loaded_from_dotenv"
+        # If dotenv not installed, just verify no crash
+

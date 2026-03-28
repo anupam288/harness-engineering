@@ -87,10 +87,12 @@ class BaseModel(ABC):
         backoff_seconds: float = 2.0,
     ) -> ModelResponse:
         """
-        Retry on transient errors with exponential backoff.
+        Retry on transient errors with exponential backoff + jitter.
+        Detects HTTP 429 (rate limit) specifically and applies longer wait.
         Raises the last exception if all retries fail.
         """
         import time
+        import random
 
         last_exc = None
         for attempt in range(retries):
@@ -98,10 +100,48 @@ class BaseModel(ABC):
                 return self.call(prompt, system, max_tokens)
             except Exception as exc:
                 last_exc = exc
-                if attempt < retries - 1:
-                    wait = backoff_seconds * (2 ** attempt)
-                    time.sleep(wait)
+                if attempt >= retries - 1:
+                    break
+
+                # Detect rate limit — use longer base backoff
+                is_rate_limit = self._is_rate_limit(exc)
+                base = (backoff_seconds * 4) if is_rate_limit else backoff_seconds
+                wait = base * (2 ** attempt) + random.uniform(0, 1)  # jitter
+
+                if is_rate_limit:
+                    print(f"  ⚠ Rate limit hit ({type(exc).__name__}) — "
+                          f"waiting {wait:.1f}s before retry {attempt + 2}/{retries}")
+                else:
+                    print(f"  ⚠ Transient error ({type(exc).__name__}) — "
+                          f"retry {attempt + 2}/{retries} in {wait:.1f}s")
+
+                time.sleep(wait)
+
         raise last_exc
+
+    @staticmethod
+    def _is_rate_limit(exc: Exception) -> bool:
+        """
+        Detect HTTP 429 rate limit errors across providers.
+        Works for Anthropic, OpenAI, and generic HTTP clients.
+        """
+        exc_str = str(exc).lower()
+        exc_type = type(exc).__name__.lower()
+
+        # HTTP status code in message
+        if "429" in exc_str:
+            return True
+        # Anthropic SDK
+        if "ratelimit" in exc_type or "rate_limit" in exc_type:
+            return True
+        # OpenAI SDK
+        if "ratelimiterror" in exc_type:
+            return True
+        # Generic keywords
+        if any(kw in exc_str for kw in ("rate limit", "too many requests",
+                                         "quota exceeded", "requests per")):
+            return True
+        return False
 
     def call_with_fallback(
         self,

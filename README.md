@@ -28,11 +28,13 @@ Three pillars:
 ## Quickstart
 
 ```bash
-# 1. Install
-pip install -r requirements.txt
+# 1. Clone and run first-time setup (checks Python, installs deps,
+#    creates .env, validates configs, installs pre-commit hooks, runs tests)
+bash scripts/setup_env.sh
 
-# 2. Set your API key
-export ANTHROPIC_API_KEY=your_key_here
+# 2. Edit .env with your API keys
+#    ANTHROPIC_API_KEY is required; others are optional
+vim .env
 
 # 3. Check gate status (all phases start blocked — expected)
 python cli.py gate --all
@@ -53,6 +55,15 @@ python cli.py run monitoring   # or schedule gc_agent nightly via cron
 
 # 7. Check overall status at any time
 python cli.py status
+```
+
+Or install as a package and use the `harness` CLI command everywhere:
+
+```bash
+pip install -e ".[dev]"
+harness gate --all
+harness run requirements --input inputs/project.json
+harness dashboard
 ```
 
 ---
@@ -91,11 +102,16 @@ sdlc-harness/
 ├── monitoring_config.yaml           ← Log source adapters and ingestor settings
 ├── monitoring_rules.yaml            ← Versioned error patterns and corrective actions
 │
+├── .env.example                     ← Environment variable template (copy to .env)
+├── pyproject.toml                   ← Package definition (pip install -e ".[dev]")
 ├── Makefile                         ← make test / lint / gates / gc / monitor / pipeline
 ├── .pre-commit-config.yaml          ← Pre-commit hooks (structural linter, tests, validators)
 ├── .github/
 │   └── workflows/
-│       └── harness.yml              ← GitHub Actions CI (gates, linter, tests, schema check)
+│       └── harness.yml              ← GitHub Actions CI (gates, linter, tests, secrets scan)
+│
+├── scripts/
+│   └── setup_env.sh                 ← First-run setup (deps, .env, pre-commit, tests)
 │
 ├── harness/
 │   ├── config.py                    ← HarnessConfig — loads harness_config.yaml
@@ -1037,7 +1053,7 @@ review criterion — and commit a fix. The agent will not make that mistake agai
 
 ```bash
 pytest tests/ -v
-# 271 tests total:
+# 280 tests total:
 #   24 — constraint/gate tests  (test_constraints.py)
 #   27 — model layer tests      (test_model_layer.py)
 #   26 — self-review tests      (test_self_review.py)
@@ -1045,13 +1061,33 @@ pytest tests/ -v
 #   58 — log monitoring tests   (test_monitoring.py)
 #   34 — runner/pipeline tests  (test_runner.py)
 #   55 — security tests         (test_security.py)
+#   (+ 9 rate limit / dotenv tests added to test_model_layer.py)
 ```
 
 ---
 
 ## Environment variables
 
+Copy `.env.example` to `.env` and fill in your values. The harness auto-loads
+`.env` on startup via `python-dotenv` (no `source .env` needed).
+
 ```bash
-export ANTHROPIC_API_KEY=your_key_here   # required for Anthropic models
-export OPENAI_API_KEY=your_key_here      # required if using OpenAI models
+cp .env.example .env
+# Edit .env with your actual keys
 ```
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `ANTHROPIC_API_KEY` | Yes | Anthropic Claude API access |
+| `OPENAI_API_KEY` | If using OpenAI | OpenAI GPT API access |
+| `HARNESS_LOG_SIGNING_KEY` | Recommended | HMAC signing of decision logs |
+| `LOKI_USERNAME` / `LOKI_API_KEY` | If using Loki | Grafana Loki log adapter |
+| `DD_API_KEY` / `DD_APP_KEY` | If using Datadog | Datadog log adapter |
+| `WEBHOOK_SECRET` | Optional | HMAC verification for webhook pushes |
+
+### Rate limit handling
+
+The model layer automatically detects HTTP 429 rate limit responses from any
+provider and applies a longer exponential backoff (4× the base interval) with
+random jitter, distinct from the shorter backoff used for transient errors like
+connection resets. No configuration needed.

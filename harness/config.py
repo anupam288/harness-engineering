@@ -66,8 +66,19 @@ class HarnessConfig:
         """
         Load config from harness_config.yaml at repo root.
         Falls back to sensible defaults if file doesn't exist.
+        Auto-loads .env if present (python-dotenv).
         """
         repo_root = Path(repo_root or os.getcwd())
+
+        # Auto-load .env — silently skipped if python-dotenv not installed
+        env_path = repo_root / ".env"
+        if env_path.exists():
+            try:
+                from dotenv import load_dotenv
+                load_dotenv(env_path, override=False)  # don't override already-set vars
+            except ImportError:
+                pass  # python-dotenv not installed — that's fine
+
         config_path = repo_root / "harness_config.yaml"
 
         overrides = {}
