@@ -137,6 +137,66 @@ def cmd_gc(args, config: HarnessConfig) -> int:
     return 0 if result.passed() else 1
 
 
+
+def cmd_dashboard(args, config) -> int:
+    """Render the observability dashboard."""
+    from harness.observability.dashboard import HarnessDashboard
+    dashboard = HarnessDashboard(config)
+    agent = getattr(args, "agent", None)
+    watch = getattr(args, "watch", False)
+    if agent:
+        dashboard.render_agent(agent)
+    elif watch:
+        obs = config.observability_config()
+        interval = obs.get("dashboard_refresh_seconds", 30)
+        dashboard.watch(interval=interval)
+    else:
+        dashboard.render()
+    return 0
+
+
+def cmd_metrics(args, config) -> int:
+    """Print a metrics summary table."""
+    from harness.observability.aggregator import MetricsAggregator
+    from harness.observability.budget import BudgetMonitor
+
+    obs = config.observability_config()
+    agg = MetricsAggregator(config.logs_dir, budgets=obs.get("budgets", {}))
+    summary = agg.summarise()
+
+    if summary.total_runs == 0:
+        print("\nNo metrics recorded yet. Run a phase first.\n")
+        return 0
+
+    print("\n=== Harness Metrics Summary ===")
+    print(f"Total runs:    {summary.total_runs}")
+    print(f"Total tokens:  {summary.total_tokens:,}")
+    print(f"Total cost:    ${summary.total_cost_usd:.4f}")
+    print(f"Health score:  {summary.harness_health_score:.2f}")
+    print(f"Pass rate:     {summary.overall_pass_rate:.0%}")
+    print(f"Failure rate:  {summary.overall_failure_rate:.0%}")
+    print(f"Needs human:   {summary.overall_needs_human_rate:.0%}")
+
+    if summary.degrading_agents:
+        print(f"\nDegrading agents: {', '.join(summary.degrading_agents)}")
+
+    print("\nPer-agent breakdown:")
+    print(f"  {'Agent':<26} {'Runs':>5} {'Pass%':>6} {'p95':>7} {'Cost':>9}")
+    print(f"  {'─'*26} {'─'*5} {'─'*6} {'─'*7} {'─'*9}")
+    for name, m in sorted(summary.per_agent.items()):
+        print(f"  {name:<26} {m.run_count:>5} {m.pass_rate:>6.0%} "
+              f"{m.p95_latency:>6.1f}s ${m.total_cost_usd:>8.4f}")
+
+    monitor = BudgetMonitor(obs.get("budgets", {}))
+    alerts = monitor.check_summary(summary)
+    if alerts:
+        print("\nBudget alerts:")
+        for alert in alerts:
+            print(f"  {alert}")
+    print()
+    return 0
+
+
 def cmd_status(args, config: HarnessConfig) -> int:
     """Show harness health status."""
     print("\n=== SDLC Harness Status ===\n")
@@ -208,6 +268,14 @@ def main():
     # status
     subparsers.add_parser("status", help="Show harness health status")
 
+    # dashboard
+    dash_parser = subparsers.add_parser("dashboard", help="Observability dashboard")
+    dash_parser.add_argument("--agent", help="Detail view for one agent")
+    dash_parser.add_argument("--watch", action="store_true", help="Auto-refresh")
+
+    # metrics
+    subparsers.add_parser("metrics", help="Metrics summary table")
+
     args = parser.parse_args()
     config = HarnessConfig.from_repo(args.repo)
 
@@ -216,6 +284,8 @@ def main():
         "run": cmd_run,
         "gc": cmd_gc,
         "status": cmd_status,
+        "dashboard": cmd_dashboard,
+        "metrics": cmd_metrics,
     }
 
     sys.exit(dispatch[args.command](args, config))

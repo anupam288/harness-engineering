@@ -92,6 +92,9 @@ class BaseAgent(ABC):
         # Model layer — resolved from model_config.yaml per agent
         self._model: BaseModel = config.build_model(agent_name=self.name.lower())
         self._prompts: PromptRegistry = config.prompt_registry()
+        # Observability — records metrics on every execute() call
+        self._metrics = config.metrics_collector()
+        self._current_run_id: str = ""
 
     # ------------------------------------------------------------------
     # Context loading (harness core: everything the agent can see)
@@ -177,7 +180,9 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
 
     def execute(self, input_data: dict) -> AgentResult:
-        """Public entrypoint. Wraps run() with logging and timing."""
+        """Public entrypoint. Wraps run() with logging, timing, and metrics."""
+        import uuid
+        self._current_run_id = str(uuid.uuid4())[:8]
         start = time.monotonic()
         try:
             result = self.run(input_data)
@@ -196,6 +201,18 @@ class BaseAgent(ABC):
 
         # Always log — harness rule
         self._decision_log.append(result)
+
+        # Record observability metrics
+        last_response = getattr(self, "_last_model_response", None)
+        self._metrics.record(
+            result=result,
+            model_id=getattr(last_response, "model", self.config.llm_model),
+            provider=getattr(last_response, "provider", "anthropic"),
+            input_tokens=getattr(last_response, "input_tokens", 0),
+            output_tokens=getattr(last_response, "output_tokens", 0),
+            latency_seconds=elapsed,
+            run_id=self._current_run_id,
+        )
 
         return result
 

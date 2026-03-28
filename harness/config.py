@@ -101,6 +101,21 @@ class HarnessConfig:
         from harness.model.prompt_registry import PromptRegistry
         return PromptRegistry(self.repo_root)
 
+    def observability_config(self) -> dict:
+        """Load observability_config.yaml. Returns empty dict if not found."""
+        path = self.repo_root / "observability_config.yaml"
+        if not path.exists():
+            return {}
+        return yaml.safe_load(path.read_text()) or {}
+
+    def metrics_collector(self):
+        """Build a MetricsCollector wired to this repo's config."""
+        from harness.observability.metrics import MetricsCollector, DEFAULT_PRICING
+        obs = self.observability_config()
+        pricing = {**DEFAULT_PRICING, **obs.get("pricing", {})}
+        budgets = obs.get("budgets", {})
+        return MetricsCollector(self.logs_dir, pricing=pricing, budgets=budgets)
+
     def summary(self) -> str:
         return (
             f"HarnessConfig\n"

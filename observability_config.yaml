@@ -1,0 +1,48 @@
+# observability_config.yaml
+# Token budget thresholds and cost-per-token pricing.
+# All budget alerts are warn-only — no agent runs are ever blocked.
+
+budgets:
+  # Warn when a single agent run uses more than this many tokens
+  alert_per_run_tokens: 50000
+
+  # Warn when a single agent run costs more than this amount (USD)
+  alert_per_run_cost_usd: 0.10
+
+  # Warn when any single agent's cumulative cost exceeds this (USD)
+  alert_per_agent_cost_usd: 5.00
+
+  # Warn when total harness cost across all runs exceeds this (USD)
+  alert_daily_cost_usd: 20.00
+
+# Cost per 1M tokens (USD) — used to estimate run cost.
+# Update these when provider pricing changes.
+# Source: https://www.anthropic.com/pricing
+pricing:
+  claude-sonnet-4-20250514:
+    input: 3.00
+    output: 15.00
+
+  claude-haiku-4-5-20251001:
+    input: 0.80
+    output: 4.00
+
+  claude-opus-4-5:
+    input: 15.00
+    output: 75.00
+
+  gpt-4o:
+    input: 2.50
+    output: 10.00
+
+  gpt-4o-mini:
+    input: 0.15
+    output: 0.60
+
+  # Fallback for unknown models
+  default:
+    input: 3.00
+    output: 15.00
+
+# Dashboard refresh interval in seconds (used by --watch mode)
+dashboard_refresh_seconds: 30
