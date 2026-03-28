@@ -44,6 +44,7 @@ class AgentResult:
         self.artifacts_produced = artifacts_produced or []
         self.flags = flags or []
         self.timestamp = datetime.now(timezone.utc).isoformat()
+        self.review_metadata: dict = {}   # populated by SelfReviewAgent if used
 
     def to_dict(self) -> dict:
         return {
@@ -55,6 +56,7 @@ class AgentResult:
             "artifacts_produced": self.artifacts_produced,
             "flags": self.flags,
             "timestamp": self.timestamp,
+            "review_metadata": self.review_metadata,
         }
 
     def passed(self) -> bool:
@@ -230,6 +232,62 @@ class BaseAgent(ABC):
         """Load this agent's system prompt from prompts/<agent_name>.system.md."""
         agent_key = self.name.lower().replace("agent", "_agent").strip("_")
         return self._prompts.get_system(agent_key, variables or {})
+
+    # ------------------------------------------------------------------
+    # Self-review integration
+    # ------------------------------------------------------------------
+
+    def run_with_review(
+        self,
+        input_data: dict,
+        criteria=None,
+        revise_fn=None,
+    ) -> AgentResult:
+        """
+        Run this agent with a SelfReviewAgent critique loop.
+
+        Produces a draft via run(), then passes it to SelfReviewAgent
+        for critique and revision up to MAX_ITERATIONS times.
+
+        Args:
+            input_data:  Same input as run()
+            criteria:    ReviewCriteria instance. Defaults to standard checks.
+            revise_fn:   Optional callable(draft, review, context) -> AgentResult
+
+        Returns:
+            Final reviewed AgentResult with review_metadata attached.
+
+        Usage in a phase runner:
+            result = agent.run_with_review(input_data, criteria=ReviewCriteria(
+                check_policy_compliance=True,
+                custom_checks=["All required YAML keys must be present"],
+            ))
+        """
+        from harness.agents.self_review_agent import ReviewCriteria, SelfReviewAgent
+
+        if criteria is None:
+            criteria = ReviewCriteria()
+
+        # Produce initial draft
+        draft = self.run(input_data)
+
+        # Build context for the reviewer (same context the agent used)
+        context = self.build_context(extra_docs=[])
+
+        # Run review loop
+        reviewer = SelfReviewAgent(self.config)
+        final = reviewer.run_review_loop(
+            producing_agent=self,
+            draft=draft,
+            context=context,
+            criteria=criteria,
+            revise_fn=revise_fn,
+        )
+
+        # Sync review_metadata back onto the result object
+        final.review_metadata = final.output.pop("review_metadata", {})
+
+        return final
 
     # ------------------------------------------------------------------
     # Subclass contract

@@ -17,6 +17,7 @@ import json
 import yaml
 
 from harness.agents.base_agent import AgentResult, BaseAgent
+from harness.agents.self_review_agent import ReviewCriteria
 
 
 class ArchitectureAgent(BaseAgent):
@@ -84,3 +85,20 @@ Return ONLY valid JSON. No preamble, no markdown fences.
                 agent_name=self.name, phase=self.phase, status="fail",
                 output={"error": str(exc)}, confidence=0.0, flags=["llm_call_failed"],
             )
+
+    @property
+    def _default_review_criteria(self):
+        from harness.agents.self_review_agent import ReviewCriteria
+        return ReviewCriteria(
+            check_policy_compliance=True,
+            check_completeness=True,
+            check_json_validity=True,
+            check_confidence_calibration=True,
+            check_no_hallucination=True,
+            custom_checks=[
+                "architecture_md must include all five sections: Agent Map, Module Boundaries, Layer Rules, Data Flow, Cross-Agent Communication Rules",
+                "policy_yaml must contain at least one rule with deterministic=true",
+                "conflict_policy_yaml must define a default_strategy",
+                "No Layer 1 agent may import another Layer 1 agent — this must be stated in Layer Rules",
+            ],
+        )

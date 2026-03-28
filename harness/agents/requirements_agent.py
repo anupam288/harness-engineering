@@ -13,6 +13,7 @@ Gate produced: requirements.md committed → design phase can open.
 from __future__ import annotations
 
 from harness.agents.base_agent import AgentResult, BaseAgent
+from harness.agents.self_review_agent import ReviewCriteria
 from harness.config import HarnessConfig
 
 
@@ -103,3 +104,19 @@ Return ONLY valid JSON. No preamble, no markdown fences.
                 confidence=0.0,
                 flags=["llm_call_failed"],
             )
+
+    @property
+    def _default_review_criteria(self):
+        from harness.agents.self_review_agent import ReviewCriteria
+        return ReviewCriteria(
+            check_policy_compliance=True,
+            check_completeness=True,
+            check_json_validity=True,
+            check_confidence_calibration=True,
+            check_no_hallucination=True,
+            custom_checks=[
+                "requirements_md must contain all five sections: Overview, Functional Requirements, Non-Functional Requirements, Constraints, Out of Scope",
+                "Every uncertain_term entry must have both term and question keys",
+                "agent_schema_v0 must have at least one required field",
+            ],
+        )

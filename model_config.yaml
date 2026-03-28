@@ -72,6 +72,18 @@ agents:
     max_tokens: 2048
     temperature: 0.0
 
+  # SelfReviewAgent — review quality is critical, always use the most capable model
+  # Lower temperature = more consistent, deterministic critique
+  self_review_agent:
+    provider: anthropic
+    model_id: claude-sonnet-4-20250514
+    max_tokens: 2048
+    temperature: 0.0
+    fallback:
+      provider: anthropic
+      model_id: claude-sonnet-4-20250514
+      max_tokens: 2048
+
 # To switch all agents to OpenAI, change default to:
 #
 # default:

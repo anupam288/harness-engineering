@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from harness.agents.base_agent import AgentResult, BaseAgent
+from harness.agents.self_review_agent import ReviewCriteria
 from harness.logs.conflict_log import ConflictLog
 from harness.logs.decision_log import DecisionLog
 from harness.logs.conflict_log import OverrideLog
@@ -169,3 +170,20 @@ Return ONLY valid JSON.
                 agent_name=self.name, phase=self.phase, status="fail",
                 output={"error": str(exc)}, confidence=0.0, flags=["llm_call_failed"],
             )
+
+    @property
+    def _default_review_criteria(self):
+        from harness.agents.self_review_agent import ReviewCriteria
+        return ReviewCriteria(
+            check_policy_compliance=False,
+            check_completeness=True,
+            check_json_validity=True,
+            check_confidence_calibration=True,
+            check_no_hallucination=True,
+            custom_checks=[
+                "Every PR must have a non-empty rationale and a valid target_file",
+                "signal_source must be one of: conflict_log, override_log, decision_log, quality",
+                "harness_health_score must be a float between 0.0 and 1.0",
+                "proposed_content must be substantively different from current_content",
+            ],
+        )
